@@ -402,528 +402,450 @@
 <div id="toast"></div>
 
 <script>
-// ─── JSONBIN CONFIG ────────────────────────────────────────────
-// jsonbin.io → ücretsiz hesap aç → API Keys → Master Key kopyala
-const JSONBIN_API_KEY = ' $2a$10$JGOBHlKcxZkUbNs5cdk94.hBGlx6vtDMYI5uf0iAzSWlqSlS.J8UW ';
-const JSONBIN_BASE    = 'https://api.jsonbin.io/v3';
+// ════════════════════════════════════════════════════════
+//  CONFIG — jsonbin.io ücretsiz hesap aç, Master Key al
+// ════════════════════════════════════════════════════════
+const JSONBIN_KEY  = '$2a$10$BURAYA_KENDI_MASTER_KEY_YAZ';
+const JSONBIN_BASE = 'https://api.jsonbin.io/v3';
 
-// Bin ID'leri localStorage'da saklanır (ilk çalıştırmada otomatik oluşturulur)
-let BIN_IDS = JSON.parse(localStorage.getItem('ptg_bins') || '{}');
+// ════════════════════════════════════════════════════════
+//  DATA LAYER  (JSONBin yoksa localStorage fallback)
+// ════════════════════════════════════════════════════════
+const useCloud = !JSONBIN_KEY.includes('BURAYA');
+let   BIN_IDS  = JSON.parse(localStorage.getItem('ptg_bins') || '{}');
+const _cache   = { users: {}, msgs: {} };
 
-// ─── JSONBIN HELPERS ───────────────────────────────────────────
 async function getBinId(key) {
   if (BIN_IDS[key]) return BIN_IDS[key];
-  const res = await fetch(`${JSONBIN_BASE}/b`, {
+  const r = await fetch(`${JSONBIN_BASE}/b`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Master-Key': JSONBIN_API_KEY,
-      'X-Bin-Name':   'poctagram_' + key,
-      'X-Bin-Private':'false'
-    },
+    headers: { 'Content-Type':'application/json', 'X-Master-Key': JSONBIN_KEY,
+               'X-Bin-Name': 'ptg_' + key, 'X-Bin-Private': 'false' },
     body: JSON.stringify({})
   });
-  if (!res.ok) throw new Error('Bin olusturulamazdi: ' + key);
-  const data = await res.json();
-  BIN_IDS[key] = data.metadata.id;
+  if (!r.ok) throw new Error('bin error');
+  const d = await r.json();
+  BIN_IDS[key] = d.metadata.id;
   localStorage.setItem('ptg_bins', JSON.stringify(BIN_IDS));
   return BIN_IDS[key];
 }
 
-const _cache = {};
-
 async function loadData(key) {
-  try {
-    const binId = await getBinId(key);
-    const res   = await fetch(`${JSONBIN_BASE}/b/${binId}/latest`, {
-      headers: { 'X-Master-Key': JSONBIN_API_KEY }
-    });
-    if (!res.ok) return _cache[key] || {};
-    const json = await res.json();
-    _cache[key] = json.record || {};
+  if (!useCloud) {
+    const raw = localStorage.getItem('ptg_' + key);
+    _cache[key] = raw ? JSON.parse(raw) : {};
     return _cache[key];
-  } catch (e) {
-    return _cache[key] || {};
   }
+  try {
+    const id  = await getBinId(key);
+    const r   = await fetch(`${JSONBIN_BASE}/b/${id}/latest`, {
+      headers: { 'X-Master-Key': JSONBIN_KEY }
+    });
+    if (!r.ok) return _cache[key];
+    const d = await r.json();
+    _cache[key] = d.record || {};
+    return _cache[key];
+  } catch { return _cache[key]; }
 }
 
 async function saveData(key, data) {
   _cache[key] = data;
+  if (!useCloud) {
+    localStorage.setItem('ptg_' + key, JSON.stringify(data));
+    return;
+  }
   try {
-    const binId = await getBinId(key);
-    await fetch(`${JSONBIN_BASE}/b/${binId}`, {
+    const id = await getBinId(key);
+    await fetch(`${JSONBIN_BASE}/b/${id}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': JSONBIN_API_KEY
-      },
+      headers: { 'Content-Type':'application/json', 'X-Master-Key': JSONBIN_KEY },
       body: JSON.stringify(data)
     });
-  } catch (e) {
-    console.warn('saveData hata:', key, e);
-  }
+  } catch(e) { console.warn('save error', e); }
 }
 
-
-// ─── STATE ────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════════════════
 let currentUser   = null;
 let activeContact = null;
 let pollTimer     = null;
 let lastMsgCount  = 0;
-let searchMode    = false; // arama modunda mı?
+let searchMode    = false;
 
-// ─── AUDIO ────────────────────────────────────────────────────
-let audioCtx;
-function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  return audioCtx;
-}
+// ════════════════════════════════════════════════════════
+//  AUDIO
+// ════════════════════════════════════════════════════════
+let _actx;
+function ac() { if (!_actx) _actx = new (window.AudioContext||window.webkitAudioContext)(); return _actx; }
 function playSend() {
-  try {
-    const c = getAudioCtx(), o = c.createOscillator(), g = c.createGain();
-    o.connect(g); g.connect(c.destination);
-    o.frequency.setValueAtTime(880, c.currentTime);
-    o.frequency.exponentialRampToValueAtTime(1320, c.currentTime + 0.07);
-    g.gain.setValueAtTime(0.2, c.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.12);
-    o.start(); o.stop(c.currentTime + 0.13);
-  } catch(e) {}
+  try { const c=ac(),o=c.createOscillator(),g=c.createGain(); o.connect(g); g.connect(c.destination);
+    o.frequency.setValueAtTime(880,c.currentTime); o.frequency.exponentialRampToValueAtTime(1320,c.currentTime+.07);
+    g.gain.setValueAtTime(.2,c.currentTime); g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.12);
+    o.start(); o.stop(c.currentTime+.13); } catch(e) {}
 }
-function playReceive() {
-  try {
-    const c = getAudioCtx(), o = c.createOscillator(), g = c.createGain();
-    o.type = 'sine';
-    o.connect(g); g.connect(c.destination);
-    o.frequency.setValueAtTime(660, c.currentTime);
-    o.frequency.exponentialRampToValueAtTime(880, c.currentTime + 0.06);
-    o.frequency.exponentialRampToValueAtTime(660, c.currentTime + 0.14);
-    g.gain.setValueAtTime(0.18, c.currentTime);
-    g.gain.exponentialRampToValueAtTime(0.001, c.currentTime + 0.2);
-    o.start(); o.stop(c.currentTime + 0.21);
-  } catch(e) {}
+function playRecv() {
+  try { const c=ac(),o=c.createOscillator(),g=c.createGain(); o.type='sine'; o.connect(g); g.connect(c.destination);
+    o.frequency.setValueAtTime(660,c.currentTime); o.frequency.exponentialRampToValueAtTime(880,c.currentTime+.06);
+    o.frequency.exponentialRampToValueAtTime(660,c.currentTime+.14);
+    g.gain.setValueAtTime(.18,c.currentTime); g.gain.exponentialRampToValueAtTime(.001,c.currentTime+.2);
+    o.start(); o.stop(c.currentTime+.21); } catch(e) {}
 }
 
-// ─── UTILS ────────────────────────────────────────────────────
-const COLORS = ['#075E54','#128C7E','#e67e22','#9b59b6','#e74c3c','#2980b9','#16a085','#8e44ad'];
-function avatarColor(name) {
-  let h = 0; for (const c of name) h = (h * 31 + c.charCodeAt(0)) % COLORS.length;
-  return COLORS[h];
+// ════════════════════════════════════════════════════════
+//  UTILS
+// ════════════════════════════════════════════════════════
+const COLORS=['#075E54','#128C7E','#e67e22','#9b59b6','#e74c3c','#2980b9','#16a085','#8e44ad'];
+function avatarColor(n){ let h=0; for(const c of n) h=(h*31+c.charCodeAt(0))%COLORS.length; return COLORS[h]; }
+function initials(n){ return n.split(' ').slice(0,2).map(w=>w[0]||'').join('').toUpperCase(); }
+function fmtTime(ts){ return new Date(ts).toLocaleTimeString('tr-TR',{hour:'2-digit',minute:'2-digit'}); }
+function fmtDate(ts){
+  const d=new Date(ts),now=new Date();
+  if(d.toDateString()===now.toDateString()) return 'Bugün';
+  const y=new Date(now); y.setDate(y.getDate()-1);
+  if(d.toDateString()===y.toDateString()) return 'Dün';
+  return d.toLocaleDateString('tr-TR',{day:'numeric',month:'long'});
 }
-function initials(name) {
-  return name.split(' ').slice(0,2).map(w => w[0] || '').join('').toUpperCase();
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\n/g,'<br>'); }
+function hashPass(p){ let h=5381; for(const c of p) h=((h<<5)+h+c.charCodeAt(0))|0; return h.toString(36); }
+function convId(a,b){ return [a,b].sort().join('__'); }
+function showToast(msg){ const t=document.getElementById('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),2500); }
+function setAuthMsg(msg,type=''){ const el=document.getElementById('auth-msg'); el.textContent=msg; el.className='auth-msg '+type; }
+function showChat(show){
+  document.getElementById('no-chat').style.display     = show ? 'none' : 'flex';
+  document.getElementById('active-chat').style.display = show ? 'flex' : 'none';
 }
-function fmtTime(ts) {
-  return new Date(ts).toLocaleTimeString('tr-TR', { hour:'2-digit', minute:'2-digit' });
-}
-function fmtDate(ts) {
-  const d = new Date(ts), now = new Date();
-  if (d.toDateString() === now.toDateString()) return 'Bugün';
-  const y = new Date(now); y.setDate(y.getDate() - 1);
-  if (d.toDateString() === y.toDateString()) return 'Dün';
-  return d.toLocaleDateString('tr-TR', { day:'numeric', month:'long' });
-}
-function esc(s) {
-  return String(s)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/>/g,'&gt;').replace(/"/g,'&quot;')
-    .replace(/\n/g,'<br>');
-}
-function hashPass(p) {
-  let h = 5381; for (const c of p) h = ((h << 5) + h + c.charCodeAt(0)) | 0;
-  return h.toString(36);
-}
-function convId(a, b) { return [a, b].sort().join('__'); }
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg; t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2500);
-}
-function setAuthMsg(msg, type = '') {
-  const el = document.getElementById('auth-msg');
-  el.textContent = msg; el.className = 'auth-msg ' + type;
+function setLoading(btnId, loading, label){
+  const b=document.getElementById(btnId);
+  b.disabled=loading; b.innerHTML=loading?'<div class="loader"></div>':label;
 }
 
-// ─── TAB SWITCH ───────────────────────────────────────────────
-function switchTab(tab) {
-  document.getElementById('form-login').style.display    = tab === 'login'    ? '' : 'none';
-  document.getElementById('form-register').style.display = tab === 'register' ? '' : 'none';
-  document.getElementById('tab-login').classList.toggle('active',    tab === 'login');
-  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+// ════════════════════════════════════════════════════════
+//  TAB
+// ════════════════════════════════════════════════════════
+function switchTab(tab){
+  document.getElementById('form-login').style.display    = tab==='login'    ? '' : 'none';
+  document.getElementById('form-register').style.display = tab==='register' ? '' : 'none';
+  document.getElementById('tab-login').classList.toggle('active',    tab==='login');
+  document.getElementById('tab-register').classList.toggle('active', tab==='register');
   setAuthMsg('');
 }
 
-// ─── AUTH ─────────────────────────────────────────────────────
-function handleLogin() {
+// ════════════════════════════════════════════════════════
+//  AUTH
+// ════════════════════════════════════════════════════════
+async function handleLogin(){
   const email = document.getElementById('login-email').value.trim().toLowerCase();
   const pass  = document.getElementById('login-pass').value;
-  if (!email || !pass) { setAuthMsg('Tüm alanları doldurun.', 'error'); return; }
+  if(!email||!pass){ setAuthMsg('Tüm alanları doldurun.','error'); return; }
 
-  const users = loadData('users');
-  const user  = Object.values(users).find(u => u.email === email && u.password === hashPass(pass));
-  if (!user) { setAuthMsg('E-posta veya şifre hatalı.', 'error'); return; }
+  setLoading('btn-login', true, 'Giriş Yap');
+  try {
+    const users = await loadData('users');
+    const user  = Object.values(users).find(u => u.email===email && u.password===hashPass(pass));
+    if(!user){ setAuthMsg('E-posta veya şifre hatalı.','error'); return; }
 
-  users[user.id].online = true; users[user.id].lastSeen = Date.now();
-  saveData('users', users);
-  currentUser = users[user.id];
-  localStorage.setItem('ptg_me', JSON.stringify(currentUser));
-  enterApp();
+    users[user.id].online   = true;
+    users[user.id].lastSeen = Date.now();
+    await saveData('users', users);
+
+    currentUser = users[user.id];
+    localStorage.setItem('ptg_me', JSON.stringify(currentUser));
+    enterApp();
+  } catch(e){
+    setAuthMsg('Bağlantı hatası, tekrar dene.','error');
+  } finally {
+    setLoading('btn-login', false, 'Giriş Yap');
+  }
 }
 
-function handleRegister() {
+async function handleRegister(){
   const name  = document.getElementById('reg-name').value.trim();
   const email = document.getElementById('reg-email').value.trim().toLowerCase();
   const pass  = document.getElementById('reg-pass').value;
-  if (!name || !email || !pass) { setAuthMsg('Tüm alanları doldurun.', 'error'); return; }
-  if (pass.length < 6)          { setAuthMsg('Şifre en az 6 karakter.', 'error'); return; }
+  if(!name||!email||!pass){ setAuthMsg('Tüm alanları doldurun.','error'); return; }
+  if(pass.length<6){ setAuthMsg('Şifre en az 6 karakter.','error'); return; }
 
-  const users = loadData('users');
-  if (Object.values(users).find(u => u.email === email)) {
-    setAuthMsg('Bu e-posta zaten kayıtlı.', 'error'); return;
+  setLoading('btn-register', true, 'Kayıt Ol');
+  try {
+    const users = await loadData('users');
+    if(Object.values(users).find(u => u.email===email)){
+      setAuthMsg('Bu e-posta zaten kayıtlı.','error'); return;
+    }
+    const id   = 'u' + Date.now() + Math.random().toString(36).slice(2,6);
+    const user = { id, name, email, password: hashPass(pass), online: true, lastSeen: Date.now() };
+    users[id]  = user;
+    await saveData('users', users);
+
+    currentUser = user;
+    localStorage.setItem('ptg_me', JSON.stringify(currentUser));
+    setAuthMsg('Kayıt başarılı! Hoş geldin 🎉','success');
+    setTimeout(enterApp, 600);
+  } catch(e){
+    setAuthMsg('Bağlantı hatası, tekrar dene.','error');
+  } finally {
+    setLoading('btn-register', false, 'Kayıt Ol');
   }
-  const id   = 'u' + Date.now() + Math.random().toString(36).slice(2,6);
-  const user = { id, name, email, password: hashPass(pass), online: true, lastSeen: Date.now() };
-  users[id]  = user;
-  saveData('users', users);
-  currentUser = user;
-  localStorage.setItem('ptg_me', JSON.stringify(user));
-  setAuthMsg('Kayıt başarılı! Hoş geldin 🎉', 'success');
-  setTimeout(enterApp, 700);
 }
 
-function handleLogout() {
-  const users = loadData('users');
-  if (users[currentUser.id]) {
-    users[currentUser.id].online = false; users[currentUser.id].lastSeen = Date.now();
-    saveData('users', users);
-  }
+async function handleLogout(){
+  try {
+    const users = await loadData('users');
+    if(users[currentUser.id]){
+      users[currentUser.id].online   = false;
+      users[currentUser.id].lastSeen = Date.now();
+      await saveData('users', users);
+    }
+  } catch(e){}
   clearInterval(pollTimer);
-  currentUser = null; activeContact = null;
+  currentUser=null; activeContact=null;
   localStorage.removeItem('ptg_me');
-  closeProfile();
-  showChat(false);
-  document.getElementById('search-input').value = '';
-  renderContactList([]);
+  closeProfile(); showChat(false);
+  document.getElementById('search-input').value='';
+  document.getElementById('contacts-list').innerHTML = emptyStateHTML('search');
   document.getElementById('screen-app').classList.remove('active');
   document.getElementById('screen-auth').classList.add('active');
   switchTab('login');
   showToast('Çıkış yapıldı');
 }
 
-// ─── ENTER APP ────────────────────────────────────────────────
-function enterApp() {
+// ════════════════════════════════════════════════════════
+//  APP
+// ════════════════════════════════════════════════════════
+function enterApp(){
   document.getElementById('screen-auth').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
   showChat(false);
-  startPolling();
   refreshSidebar();
+  startPolling();
 }
 
-// ─── SHOW / HIDE CHAT PANEL ───────────────────────────────────
-function showChat(show) {
-  const noChatEl     = document.getElementById('no-chat');
-  const activeChatEl = document.getElementById('active-chat');
-  if (show) {
-    noChatEl.style.display     = 'none';
-    activeChatEl.style.display = 'flex';
-  } else {
-    noChatEl.style.display     = 'flex';
-    activeChatEl.style.display = 'none';
-  }
+// ════════════════════════════════════════════════════════
+//  SIDEBAR
+// ════════════════════════════════════════════════════════
+function emptyStateHTML(type){
+  if(type==='search') return `<div class="empty-state"><svg fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><p>Arama yaparak<br>kullanıcı bulabilirsiniz</p></div>`;
+  return `<div class="empty-state"><svg fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><p>Kullanıcı bulunamadı</p></div>`;
 }
 
-// ─── SIDEBAR REFRESH ──────────────────────────────────────────
-function refreshSidebar() {
-  // Arama modundaysa listeye dokunma
-  if (searchMode) return;
-
-  const users = loadData('users');
-  const msgs  = loadData('msgs');
-
-  // Benimle konuşan kişileri bul
+async function refreshSidebar(){
+  if(searchMode) return;
+  const [users, msgs] = await Promise.all([loadData('users'), loadData('msgs')]);
   const seen = {};
   Object.values(msgs).forEach(m => {
-    if (m.from === currentUser.id || m.to === currentUser.id) {
-      const other = m.from === currentUser.id ? m.to : m.from;
-      if (!seen[other] || m.ts > seen[other]) seen[other] = m.ts;
+    if(m.from===currentUser.id || m.to===currentUser.id){
+      const other = m.from===currentUser.id ? m.to : m.from;
+      if(!seen[other] || m.ts>seen[other]) seen[other]=m.ts;
     }
   });
-
-  const contacts = Object.keys(seen)
-    .sort((a, b) => seen[b] - seen[a])
-    .map(uid => users[uid]).filter(Boolean);
-
-  if (!contacts.length) {
-    document.getElementById('contacts-list').innerHTML =
-      `<div class="empty-state">
-        <svg fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        <p>Arama yaparak<br>kullanıcı bulabilirsiniz</p>
-      </div>`;
-    return;
-  }
-
-  renderContactList(contacts);
+  const contacts = Object.keys(seen).sort((a,b)=>seen[b]-seen[a]).map(uid=>users[uid]).filter(Boolean);
+  if(!contacts.length){ document.getElementById('contacts-list').innerHTML=emptyStateHTML('search'); return; }
+  renderContactList(contacts, msgs);
 }
 
-function renderContactList(users) {
-  const msgs = loadData('msgs');
-  const list = document.getElementById('contacts-list');
-
-  if (!users.length) {
-    list.innerHTML =
-      `<div class="empty-state">
-        <svg fill="none" stroke="currentColor" stroke-width="1" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
-        <p>Kullanıcı bulunamadı</p>
-      </div>`;
-    return;
-  }
-
+function renderContactList(users, msgs){
+  if(!msgs) msgs=_cache.msgs||{};
+  const list=document.getElementById('contacts-list');
+  if(!users.length){ list.innerHTML=emptyStateHTML('none'); return; }
   list.innerHTML = users.map(u => {
-    const cid      = convId(currentUser.id, u.id);
-    const convMsgs = Object.values(msgs).filter(m => m.conv === cid).sort((a, b) => a.ts - b.ts);
-    const last     = convMsgs[convMsgs.length - 1];
-    const unread   = convMsgs.filter(m => m.from === u.id && !m.read).length;
-    const col      = avatarColor(u.name);
-    const online   = u.online && (Date.now() - u.lastSeen < 90000);
-    const isActive = activeContact && activeContact.id === u.id;
-
-    return `<div class="contact-item${isActive ? ' active' : ''}" onclick="openChat('${u.id}')">
-      <div class="avatar" style="background:${col}">
-        ${initials(u.name)}
-        ${online ? '<span class="online-dot"></span>' : ''}
-      </div>
+    const cid   = convId(currentUser.id, u.id);
+    const conv  = Object.values(msgs).filter(m=>m.conv===cid).sort((a,b)=>a.ts-b.ts);
+    const last  = conv[conv.length-1];
+    const unread= conv.filter(m=>m.from===u.id&&!m.read).length;
+    const col   = avatarColor(u.name);
+    const online= u.online&&(Date.now()-u.lastSeen<90000);
+    const active= activeContact&&activeContact.id===u.id;
+    return `<div class="contact-item${active?' active':''}" onclick="openChat('${u.id}')">
+      <div class="avatar" style="background:${col}">${initials(u.name)}${online?'<span class="online-dot"></span>':''}</div>
       <div class="contact-info">
         <div class="contact-name">${esc(u.name)}</div>
-        <div class="contact-last">${last ? esc(last.text.slice(0, 45)) : '<span style="color:#aaa">Mesaj gönder</span>'}</div>
+        <div class="contact-last">${last?esc(last.text.slice(0,45)):'<span style="color:#aaa">Mesaj gönder</span>'}</div>
       </div>
       <div class="contact-meta">
-        ${last   ? `<span class="contact-time">${fmtTime(last.ts)}</span>` : ''}
-        ${unread ? `<span class="unread-badge">${unread > 9 ? '9+' : unread}</span>` : ''}
+        ${last?`<span class="contact-time">${fmtTime(last.ts)}</span>`:''}
+        ${unread?`<span class="unread-badge">${unread>9?'9+':unread}</span>`:''}
       </div>
     </div>`;
   }).join('');
 }
 
-// ─── SEARCH ───────────────────────────────────────────────────
-function handleSearch() {
+// ════════════════════════════════════════════════════════
+//  SEARCH
+// ════════════════════════════════════════════════════════
+async function handleSearch(){
   const q = document.getElementById('search-input').value.trim().toLowerCase();
-
-  if (!q) {
-    searchMode = false;
-    refreshSidebar();
-    return;
-  }
-
-  searchMode = true; // polling listeye dokunmasın
-  const users   = loadData('users');
-  const results = Object.values(users).filter(
-    u => u.id !== currentUser.id && u.name.toLowerCase().includes(q)
-  );
+  if(!q){ searchMode=false; refreshSidebar(); return; }
+  searchMode=true;
+  const users   = await loadData('users');
+  const results = Object.values(users).filter(u => u.id!==currentUser.id && u.name.toLowerCase().includes(q));
   renderContactList(results);
 }
 
-// ─── OPEN CHAT ────────────────────────────────────────────────
-function openChat(uid) {
-  const users = loadData('users');
-  if (!users[uid]) return;
+// ════════════════════════════════════════════════════════
+//  OPEN / CLOSE CHAT
+// ════════════════════════════════════════════════════════
+async function openChat(uid){
+  const users = await loadData('users');
+  if(!users[uid]) return;
   activeContact = users[uid];
 
-  // Arama kutusunu temizle, normal moda dön
-  document.getElementById('search-input').value = '';
-  searchMode = false;
+  document.getElementById('search-input').value='';
+  searchMode=false;
 
-  // Chat panelini göster
   showChat(true);
-  document.getElementById('chat-area').classList.add('open'); // mobile
+  document.getElementById('chat-area').classList.add('open');
 
-  // Header
-  const col = avatarColor(activeContact.name);
-  const av  = document.getElementById('chat-header-avatar');
-  av.style.background = col;
-  av.textContent      = initials(activeContact.name);
-  document.getElementById('chat-header-name').textContent = activeContact.name;
-  const online = activeContact.online && (Date.now() - activeContact.lastSeen < 90000);
-  document.getElementById('chat-header-status').textContent =
-    online ? 'Çevrimiçi' : 'Son görülme: ' + fmtTime(activeContact.lastSeen);
+  const col=avatarColor(activeContact.name);
+  const av=document.getElementById('chat-header-avatar');
+  av.style.background=col; av.textContent=initials(activeContact.name);
+  document.getElementById('chat-header-name').textContent=activeContact.name;
+  const online=activeContact.online&&(Date.now()-activeContact.lastSeen<90000);
+  document.getElementById('chat-header-status').textContent=online?'Çevrimiçi':'Son görülme: '+fmtTime(activeContact.lastSeen);
 
-  // Mesajları yükle
-  renderMessages();
-
-  // Okundu işaretle
+  await renderMessages();
   markRead(uid);
-
-  // Sidebar güncelle
   refreshSidebar();
-
-  // Odaklan
-  setTimeout(() => document.getElementById('msg-input').focus(), 100);
+  setTimeout(()=>document.getElementById('msg-input').focus(),150);
 }
 
-function closeChatMobile() {
+function closeChatMobile(){
   document.getElementById('chat-area').classList.remove('open');
   showChat(false);
-  activeContact = null;
+  activeContact=null;
   refreshSidebar();
 }
 
-// ─── MESSAGES ─────────────────────────────────────────────────
-function renderMessages() {
-  if (!activeContact) return;
-  const msgs = loadData('msgs');
+// ════════════════════════════════════════════════════════
+//  MESSAGES
+// ════════════════════════════════════════════════════════
+async function renderMessages(){
+  if(!activeContact) return;
+  const msgs = await loadData('msgs');
   const cid  = convId(currentUser.id, activeContact.id);
-  const conv = Object.values(msgs).filter(m => m.conv === cid).sort((a, b) => a.ts - b.ts);
-
+  const conv = Object.values(msgs).filter(m=>m.conv===cid).sort((a,b)=>a.ts-b.ts);
   const wrap = document.getElementById('messages-wrap');
-
-  if (!conv.length) {
-    wrap.innerHTML = '<div style="text-align:center;color:#aaa;padding:40px 20px;font-size:13px;">Henüz mesaj yok 👋</div>';
-    lastMsgCount = 0;
-    return;
+  if(!conv.length){
+    wrap.innerHTML='<div style="text-align:center;color:#aaa;padding:40px 20px;font-size:13px;">Henüz mesaj yok 👋</div>';
+    lastMsgCount=0; return;
   }
-
-  let html = '', lastDate = '';
-  conv.forEach(m => {
-    const d = fmtDate(m.ts);
-    if (d !== lastDate) {
-      html += `<div class="date-divider"><span>${d}</span></div>`;
-      lastDate = d;
-    }
-    const isOut = m.from === currentUser.id;
-    html += `<div class="msg-row ${isOut ? 'out' : 'in'}">
-      <div class="msg-bubble">
-        ${esc(m.text)}
-        <div class="msg-meta">
-          <span>${fmtTime(m.ts)}</span>
-          ${isOut ? `<span class="tick"><svg viewBox="0 0 18 18" fill="${m.read ? '#53bdeb' : '#aaa'}">
-            <path d="M17.394 5.035l-.57-.444a.434.434 0 0 0-.609.076L8.397 13.13l-3.967-3.497a.434.434 0 0 0-.614.029l-.505.545a.434.434 0 0 0 .028.614l4.553 4.017a.434.434 0 0 0 .614-.028l9.056-10.561a.434.434 0 0 0-.168-.214z"/>
-            <path d="M12.694 5.035l-.57-.444a.434.434 0 0 0-.609.076L3.697 13.13l-1.967-1.497a.434.434 0 0 0-.614.029l-.505.545a.434.434 0 0 0 .028.614l2.553 2.017a.434.434 0 0 0 .614-.028l9.056-10.561a.434.434 0 0 0-.062-.214z"/>
-          </svg></span>` : ''}
-        </div>
-      </div>
-    </div>`;
+  let html='', lastDate='';
+  conv.forEach(m=>{
+    const d=fmtDate(m.ts);
+    if(d!==lastDate){ html+=`<div class="date-divider"><span>${d}</span></div>`; lastDate=d; }
+    const out=m.from===currentUser.id;
+    html+=`<div class="msg-row ${out?'out':'in'}"><div class="msg-bubble">${esc(m.text)}<div class="msg-meta"><span>${fmtTime(m.ts)}</span>${out?`<span class="tick"><svg viewBox="0 0 18 18" fill="${m.read?'#53bdeb':'#aaa'}"><path d="M17.394 5.035l-.57-.444a.434.434 0 0 0-.609.076L8.397 13.13l-3.967-3.497a.434.434 0 0 0-.614.029l-.505.545a.434.434 0 0 0 .028.614l4.553 4.017a.434.434 0 0 0 .614-.028l9.056-10.561a.434.434 0 0 0-.168-.214z"/><path d="M12.694 5.035l-.57-.444a.434.434 0 0 0-.609.076L3.697 13.13l-1.967-1.497a.434.434 0 0 0-.614.029l-.505.545a.434.434 0 0 0 .028.614l2.553 2.017a.434.434 0 0 0 .614-.028l9.056-10.561a.434.434 0 0 0-.062-.214z"/></svg></span>`:''}</div></div></div>`;
   });
-
-  wrap.innerHTML = html;
-  wrap.scrollTop = wrap.scrollHeight;
-  lastMsgCount = conv.length;
+  wrap.innerHTML=html; wrap.scrollTop=wrap.scrollHeight; lastMsgCount=conv.length;
 }
 
-function markRead(fromUid) {
-  const msgs = loadData('msgs');
-  let changed = false;
-  Object.values(msgs).forEach(m => {
-    if (m.from === fromUid && m.to === currentUser.id && !m.read) {
-      m.read = true; changed = true;
-    }
-  });
-  if (changed) saveData('msgs', msgs);
+async function markRead(fromUid){
+  const msgs=await loadData('msgs'); let changed=false;
+  Object.values(msgs).forEach(m=>{ if(m.from===fromUid&&m.to===currentUser.id&&!m.read){ m.read=true; changed=true; } });
+  if(changed) saveData('msgs',msgs); // fire & forget
 }
 
-function sendMessage() {
-  const input = document.getElementById('msg-input');
-  const text  = input.value.trim();
-  if (!text || !activeContact) return;
+async function sendMessage(){
+  const input=document.getElementById('msg-input');
+  const text=input.value.trim();
+  if(!text||!activeContact) return;
+  input.value=''; autoResize(input); playSend();
 
-  input.value = ''; autoResize(input); playSend();
-
-  const msg = {
-    id:   'm' + Date.now() + Math.random().toString(36).slice(2,5),
-    conv: convId(currentUser.id, activeContact.id),
-    from: currentUser.id,
-    to:   activeContact.id,
-    text, ts: Date.now(), read: false
+  const msg={
+    id:'m'+Date.now()+Math.random().toString(36).slice(2,5),
+    conv:convId(currentUser.id,activeContact.id),
+    from:currentUser.id, to:activeContact.id,
+    text, ts:Date.now(), read:false
   };
-
-  const msgs = loadData('msgs');
-  msgs[msg.id] = msg;
-  saveData('msgs', msgs);
-  renderMessages();
+  // Önce cache'e ekle, UI'ı hemen güncelle
+  if(!_cache.msgs) _cache.msgs={};
+  _cache.msgs[msg.id]=msg;
+  renderMessages(); // cache'den render (hızlı)
   refreshSidebar();
+
+  // Arka planda kaydet
+  const msgs=await loadData('msgs');
+  msgs[msg.id]=msg;
+  saveData('msgs',msgs);
 }
 
-function handleInputKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-}
+function handleInputKey(e){ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendMessage(); } }
+function autoResize(el){ el.style.height='auto'; el.style.height=Math.min(el.scrollHeight,120)+'px'; }
 
-function autoResize(el) {
-  el.style.height = 'auto';
-  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-}
-
-// ─── POLLING ──────────────────────────────────────────────────
-function startPolling() {
-  pollTimer = setInterval(() => {
-    // Kendi online durumunu güncelle
-    const users = loadData('users');
-    if (users[currentUser.id]) {
-      users[currentUser.id].online   = true;
-      users[currentUser.id].lastSeen = Date.now();
-      saveData('users', users);
-    }
-
-    // Sidebar (sadece arama modu kapalıysa)
-    refreshSidebar();
-
-    // Aktif sohbette yeni mesaj var mı?
-    if (activeContact) {
-      const msgs = loadData('msgs');
-      const cid  = convId(currentUser.id, activeContact.id);
-      const conv = Object.values(msgs).filter(m => m.conv === cid);
-      if (conv.length > lastMsgCount) {
-        const incoming = conv.slice(lastMsgCount).some(m => m.from === activeContact.id);
-        if (incoming) playReceive();
-        renderMessages();
-        markRead(activeContact.id);
+// ════════════════════════════════════════════════════════
+//  POLLING
+// ════════════════════════════════════════════════════════
+function startPolling(){
+  pollTimer = setInterval(async ()=>{
+    try {
+      // Online durumu güncelle (fire & forget)
+      const users=_cache.users||{};
+      if(users[currentUser.id]){
+        users[currentUser.id].online=true; users[currentUser.id].lastSeen=Date.now();
+        saveData('users',users);
       }
-
-      // Header durumu güncelle
-      const cu = loadData('users')[activeContact.id];
-      if (cu) {
-        const online = cu.online && (Date.now() - cu.lastSeen < 90000);
-        document.getElementById('chat-header-status').textContent =
-          online ? 'Çevrimiçi' : 'Son görülme: ' + fmtTime(cu.lastSeen);
+      // Sidebar
+      if(!searchMode) refreshSidebar();
+      // Aktif sohbet
+      if(activeContact){
+        const msgs=await loadData('msgs');
+        const cid=convId(currentUser.id,activeContact.id);
+        const conv=Object.values(msgs).filter(m=>m.conv===cid);
+        if(conv.length>lastMsgCount){
+          const newOnes=conv.sort((a,b)=>a.ts-b.ts).slice(lastMsgCount);
+          if(newOnes.some(m=>m.from===activeContact.id)) playRecv();
+          await renderMessages(); markRead(activeContact.id);
+        }
+        // Header online durumu
+        const allUsers=await loadData('users');
+        const cu=allUsers[activeContact.id];
+        if(cu){ const on=cu.online&&(Date.now()-cu.lastSeen<90000); document.getElementById('chat-header-status').textContent=on?'Çevrimiçi':'Son görülme: '+fmtTime(cu.lastSeen); }
       }
-    }
-  }, 3000);
+    } catch(e){}
+  }, 4000);
 }
 
-// ─── PROFILE ──────────────────────────────────────────────────
-function openProfile() {
-  if (!currentUser) return;
-  const col = avatarColor(currentUser.name);
-  const av  = document.getElementById('profile-avatar-big');
-  av.style.background = col; av.textContent = initials(currentUser.name);
-  document.getElementById('profile-name-big').textContent  = currentUser.name;
-  document.getElementById('profile-email-big').textContent = currentUser.email;
+// ════════════════════════════════════════════════════════
+//  PROFILE
+// ════════════════════════════════════════════════════════
+function openProfile(){
+  if(!currentUser) return;
+  const col=avatarColor(currentUser.name);
+  const av=document.getElementById('profile-avatar-big');
+  av.style.background=col; av.textContent=initials(currentUser.name);
+  document.getElementById('profile-name-big').textContent=currentUser.name;
+  document.getElementById('profile-email-big').textContent=currentUser.email;
   document.getElementById('profile-panel').classList.add('show');
 }
-function closeProfile() { document.getElementById('profile-panel').classList.remove('show'); }
-function closeProfileOutside(e) { if (e.target.id === 'profile-panel') closeProfile(); }
+function closeProfile(){ document.getElementById('profile-panel').classList.remove('show'); }
+function closeProfileOutside(e){ if(e.target.id==='profile-panel') closeProfile(); }
 
-// ─── INIT ─────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
-  const saved = localStorage.getItem('ptg_me');
-  if (saved) {
-    try {
-      currentUser = JSON.parse(saved);
-      enterApp();
-    } catch { localStorage.removeItem('ptg_me'); }
+// ════════════════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', ()=>{
+  // API key uyarısı
+  if(!useCloud){
+    document.body.insertAdjacentHTML('beforeend',
+      `<div id="cloud-warn" style="position:fixed;top:0;left:0;right:0;background:#e67e22;color:#fff;text-align:center;padding:9px 12px;font-size:13px;z-index:9999;">
+        ⚠️ JSONBin API Key girilmedi — veriler <b>sadece bu tarayıcıda</b> saklanıyor. Farklı cihazlardan giriş için
+        <a href="https://jsonbin.io" target="_blank" style="color:#fff;font-weight:700;text-decoration:underline;">jsonbin.io</a>'dan key al ve index.html'e yaz.
+        <button onclick="document.getElementById('cloud-warn').remove()" style="margin-left:12px;background:rgba(255,255,255,.25);border:none;color:#fff;padding:2px 10px;border-radius:10px;cursor:pointer;">✕</button>
+      </div>`
+    );
   }
 
-  // Enter tuşu auth formlarında
-  document.getElementById('login-email').addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
-  document.getElementById('login-pass') .addEventListener('keydown', e => { if (e.key === 'Enter') handleLogin(); });
-  document.getElementById('reg-name')   .addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
-  document.getElementById('reg-email')  .addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
-  document.getElementById('reg-pass')   .addEventListener('keydown', e => { if (e.key === 'Enter') handleRegister(); });
+  // Oturum devam ediyorsa direkt gir
+  const saved=localStorage.getItem('ptg_me');
+  if(saved){ try{ currentUser=JSON.parse(saved); enterApp(); }catch{ localStorage.removeItem('ptg_me'); } }
 
-  // Offline olarak işaretle
-  window.addEventListener('beforeunload', () => {
-    if (!currentUser) return;
-    const users = loadData('users');
-    if (users[currentUser.id]) {
-      users[currentUser.id].online   = false;
-      users[currentUser.id].lastSeen = Date.now();
-      saveData('users', users);
+  // Enter tuşları
+  ['login-email','login-pass'].forEach(id => document.getElementById(id).addEventListener('keydown', e=>{ if(e.key==='Enter') handleLogin(); }));
+  ['reg-name','reg-email','reg-pass'].forEach(id => document.getElementById(id).addEventListener('keydown', e=>{ if(e.key==='Enter') handleRegister(); }));
+
+  // Çıkarken offline yap
+  window.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='hidden'&&currentUser){
+      const u=_cache.users||{}; if(u[currentUser.id]){ u[currentUser.id].online=false; u[currentUser.id].lastSeen=Date.now(); saveData('users',u); }
     }
   });
 });
