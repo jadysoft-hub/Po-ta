@@ -118,7 +118,7 @@
     /* CHAT AREA */
     #chat-area {
       flex: 1; display: flex; flex-direction: column;
-      height: 100vh; background: var(--bg); overflow: hidden;
+      height: 100vh; min-height: 0; background: var(--bg); overflow: hidden;
     }
 
     /* No chat placeholder */
@@ -130,28 +130,30 @@
     #no-chat h3 { font-size: 22px; font-weight: 300; color: #41525D; }
     #no-chat p { font-size: 14px; }
 
-    /* Active chat — shown/hidden with JS */
+    /* Active chat */
     #active-chat {
-      flex: 1; display: flex; flex-direction: column;
-      height: 100%; overflow: hidden;
+      display: flex; flex-direction: column;
+      width: 100%; height: 100%; min-height: 0; overflow: hidden;
     }
 
     .chat-header {
       background: var(--teal-dark); color: var(--white); padding: 10px 16px;
-      display: flex; align-items: center; gap: 12px; min-height: 56px;
+      display: flex; align-items: center; gap: 10px; min-height: 56px;
       flex-shrink: 0; box-shadow: 0 1px 3px var(--shadow);
     }
-    .chat-header-info { flex: 1; }
-    .chat-header-info h3 { font-size: 16px; font-weight: 600; }
+    .chat-header-info { flex: 1; min-width: 0; }
+    .chat-header-info h3 { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .chat-header-info span { font-size: 12px; color: rgba(255,255,255,.75); }
-    .back-btn { display: none; background: none; border: none; color: var(--white); cursor: pointer; padding: 4px 8px 4px 0; }
+    .back-btn { display: none; flex-shrink: 0; background: none; border: none; color: var(--white); cursor: pointer; padding: 4px 6px 4px 0; }
 
     .messages-wrap {
-      flex: 1; overflow-y: auto; padding: 12px 16px;
+      flex: 1; min-height: 0; overflow-y: auto; padding: 12px 12px 8px;
+      background-color: var(--bg);
       background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='%23000' fill-opacity='0.03'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/svg%3E");
     }
     .messages-wrap::-webkit-scrollbar { width: 4px; }
     .messages-wrap::-webkit-scrollbar-thumb { background: var(--gray-mid); border-radius: 4px; }
+
 
     .date-divider { text-align: center; margin: 12px 0; }
     .date-divider span {
@@ -176,18 +178,23 @@
     .tick svg { width: 16px; height: 16px; display: block; }
 
     .chat-input-row {
-      background: var(--gray-light); padding: 8px 12px;
+      background: var(--gray-light); padding: 8px 10px;
       display: flex; align-items: flex-end; gap: 8px;
       flex-shrink: 0; border-top: 1px solid #e0e0e0;
+      /* Mobilde klavye açıldığında altına yapışık kalır */
+      position: sticky; bottom: 0;
     }
     .msg-input {
-      flex: 1; padding: 10px 14px; background: var(--white); border: none;
-      border-radius: 22px; font-size: 15px; outline: none; resize: none;
+      flex: 1; min-width: 0; padding: 9px 14px; background: var(--white); border: none;
+      border-radius: 22px; font-size: 16px; outline: none; resize: none;
       font-family: var(--font); max-height: 120px; overflow-y: auto; line-height: 1.4;
+      /* iOS zoom önle */
+      -webkit-text-size-adjust: 100%;
     }
     .send-btn {
-      width: 44px; height: 44px; border-radius: 50%; background: var(--teal-mid); border: none;
-      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      width: 44px; height: 44px; min-width: 44px; border-radius: 50%;
+      background: var(--teal-mid); border: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
       color: var(--white); transition: background .15s; flex-shrink: 0;
     }
     .send-btn:hover { background: var(--teal-dark); }
@@ -239,15 +246,43 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* MOBILE */
+    /* ── MOBİL ── */
     @media (max-width: 680px) {
-      #sidebar { width: 100%; min-width: 0; }
+      #sidebar { width: 100%; min-width: 0; border-right: none; }
+
+      /* Chat ekranı mobilde tam ekran katman olarak üste çıkar */
       #chat-area {
-        position: fixed; inset: 0; z-index: 50;
-        transform: translateX(100%); transition: transform .25s ease;
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        width: 100%; height: 100%;
+        /* iOS safe-area desteği */
+        height: 100dvh;
+        z-index: 50;
+        transform: translateX(100%);
+        transition: transform .3s cubic-bezier(.4,0,.2,1);
+        display: flex; flex-direction: column; overflow: hidden;
       }
       #chat-area.open { transform: translateX(0); }
+
+      /* active-chat mobilde tam dolar */
+      #active-chat {
+        flex: 1; min-height: 0;
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+
+      /* Klavye açıldığında mesajlar küçülür, input altta sabit */
+      .messages-wrap { flex: 1; min-height: 0; overflow-y: auto; }
+
+      .chat-input-row {
+        flex-shrink: 0;
+        /* iOS klavye üstünde görünmesi için */
+        padding-bottom: max(8px, env(safe-area-inset-bottom));
+      }
+
       .back-btn { display: flex !important; }
+
+      /* Baloncuklar mobilde biraz daha geniş */
+      .msg-bubble { max-width: 82%; font-size: 15px; }
     }
   </style>
 </head>
@@ -322,7 +357,7 @@
     </div>
 
     <!-- Active chat -->
-    <div id="active-chat" style="display:none; flex-direction:column; height:100%; overflow:hidden;">
+    <div id="active-chat" style="display:none;">
       <div class="chat-header">
         <button class="back-btn" onclick="closeChatMobile()">
           <svg width="22" height="22" fill="currentColor" viewBox="0 0 24 24"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/></svg>
@@ -369,7 +404,7 @@
 <script>
 // ─── JSONBIN CONFIG ────────────────────────────────────────────
 // jsonbin.io → ücretsiz hesap aç → API Keys → Master Key kopyala
-const JSONBIN_API_KEY = '$2a$10$BURAYA_KENDI_MASTER_KEY_YAZ';
+const JSONBIN_API_KEY = ' $2a$10$JGOBHlKcxZkUbNs5cdk94.hBGlx6vtDMYI5uf0iAzSWlqSlS.J8UW ';
 const JSONBIN_BASE    = 'https://api.jsonbin.io/v3';
 
 // Bin ID'leri localStorage'da saklanır (ilk çalıştırmada otomatik oluşturulur)
