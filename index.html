@@ -133,8 +133,13 @@
     /* ===== CHAT AREA ===== */
     #chat-area {
       flex: 1; display: flex; flex-direction: column; height: 100vh;
-      background: var(--bg); position: relative;
+      background: var(--bg); position: relative; overflow: hidden;
     }
+    #active-chat {
+      display: none; flex-direction: column; height: 100%; width: 100%;
+      position: absolute; inset: 0;
+    }
+    #active-chat.visible { display: flex; }
     .chat-bg {
       position: absolute; inset: 0; opacity: .06; pointer-events: none;
       background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000' fill-opacity='1'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
@@ -327,7 +332,7 @@
       <p>Mesajlaşmak için bir kullanıcı seçin</p>
     </div>
 
-    <div id="active-chat" style="display:none; flex-direction:column; height:100%; position:relative;">
+    <div id="active-chat">
       <div class="chat-bg"></div>
       <div class="chat-header">
         <button class="back-btn icon-btn" onclick="closeChatMobile()">
@@ -582,7 +587,7 @@ function enterApp() {
   document.getElementById('screen-auth').classList.remove('active');
   document.getElementById('screen-app').classList.add('active');
   document.getElementById('no-chat').style.display='';
-  document.getElementById('active-chat').style.display='none';
+  document.getElementById('active-chat').classList.remove('visible');
   startPolling();
 }
 
@@ -599,7 +604,13 @@ async function handleSearch() {
   renderContactItems(results, true);
 }
 
+function isSearching() {
+  return document.getElementById('search-input').value.trim().length > 0;
+}
+
 async function renderRecentContacts() {
+  // Arama modundaysa listeyi güncelleme
+  if (isSearching()) return;
   const msgs = await loadData('messages');
   const users = await loadData('users');
   allUsers = users; allMessages = msgs;
@@ -665,7 +676,7 @@ async function openChat(uid) {
 
   document.getElementById('no-chat').style.display='none';
   const ac = document.getElementById('active-chat');
-  ac.style.display='flex';
+  ac.classList.add('visible');
 
   // mobile
   document.getElementById('chat-area').classList.add('mobile-open');
@@ -693,6 +704,8 @@ async function openChat(uid) {
 
 function closeChatMobile() {
   document.getElementById('chat-area').classList.remove('mobile-open');
+  document.getElementById('active-chat').classList.remove('visible');
+  document.getElementById('no-chat').style.display='';
   activeContact=null;
 }
 
